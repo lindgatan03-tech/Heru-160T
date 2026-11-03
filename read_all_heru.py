@@ -1,67 +1,101 @@
+#!/usr/bin/env python3
+"""
+Heru 160T - Komplett Modbus TCP Styr- och Avläsningsskript
+IP: 192.168.51.202 | Port: 502 | Unit ID: 1
+"""
+
+import sys
+import argparse
 from pymodbus.client import ModbusTcpClient
 
-IP = "192.168.51.202"
-PORT = 502
-SOURCE_IP = "192.168.51.84"
-DEVICE_ID = 1
+HERU_IP = "192.168.51.202"
+HERU_PORT = 502
+UNIT_ID = 1
 
-client = ModbusTcpClient(IP, port=PORT, source_address=(SOURCE_IP, 0), timeout=3)
+# Kända registeradresser baserat på verifiering
+REG_BOOST = 22        # Forcering (1=PÅ, 0=AV)
+REG_OVERPRESSURE = 23 # Plats för övertryck (justeras vid behov)
 
-print("Försöker ansluta till Heru-aggregatet...")
-if client.connect():
-    print("Ansluten!\n")
+def connect_client():
+    client = ModbusTcpClient(HERU_IP, port=HERU_PORT)
+    if not client.connect():
+        print(f"❌ Kunde inte ansluta till Heru på {HERU_IP}:{HERU_PORT}")
+        sys.exit(1)
+    return client
 
-    # 1. Läs temperaturer (Input Registers 0-9)
-    in_regs = client.read_input_registers(address=0, count=10, device_id=DEVICE_ID)
-    if not in_regs.isError():
-        r = in_regs.registers
-        print("=== MÄTVÄRDEN - TEMPERATURER ===")
-        print(f"Component ID [3x00001]: {r[0]}")
-        print(f"Utetemperatur [3x00002]: {r[1] / 10.0} °C")
-        print(f"Tilluftstemperatur [3x00003]: {r[2] / 10.0} °C")
-        print(f"Frånluftstemperatur [3x00004]: {r[3] / 10.0} °C")
-        print(f"Avluftstemperatur [3x00005]: {r[4] / 10.0} °C")
-    else:
-        print("Kunde inte läsa temperaturer.")
+def read_status():
+    client = connect_client()
+    try:
+        print("==================================================")
+        print("         HERU 160T - STATUS & TELEMETRI           ")
+        print("==================================================")
 
-    # 2. Läs fläktdata (Input Registers 20-29)
-    fan_regs = client.read_input_registers(address=20, count=10, device_id=DEVICE_ID)
-    if not fan_regs.isError():
-        fr = fan_regs.registers
-        print("\n=== MÄTVÄRDEN - FLÄKTAR ===")
-        print(f"Tilluftsfläkt steg [3x00023]: {fr[2]}")
-        print(f"Frånluftsfläkt steg [3x00024]: {fr[3]}")
-        print(f"Tilluftsfläkt effekt [3x00025]: {fr[4]} %")
-        print(f"Frånluftsfläkt effekt [3x00026]: {fr[5]} %")
-        print(f"Tilluftsfläkt hastighet [3x00027]: {fr[6]} RPM")
-        print(f"Frånluftsfläkt hastighet [3x00028]: {fr[7]} RPM")
-    else:
-        print("Kunde inte läsa fläktdata.")
+        # 1. Läs temperaturer (Input Registers 0-3)
+        input_res = client.read_input_registers(address=0, count=4, device_id=UNIT_ID)
+        if not input_res.isError():
+            r = input_res.registers
+            parse_temp = lambda v: (v - 65536 if v > 32767 else v) / 10.0
+            print("🌡️  TEMPERATURER")
+            print(f"  • Utomhusluft (Givare): {r[0]} -> {parse_temp(r[0]):>5.1f} °C")
+            print(f"  • Tilluft:             {parse_temp(r[1]):>6.1f} °C")
+            print(f"  • Frånluft (Inne):     {parse_temp(r[2]):>6.1f} °C")
+            print(f"  • Avluft:              {parse_temp(r[3]):>6.1f} °C")
 
-    # 3. Läs Holding Registers (börvärden 0-9)
-    hold_regs = client.read_holding_registers(address=0, count=10, device_id=DEVICE_ID)
-    if not hold_regs.isError():
-        hr = hold_regs.registers
-        print("\n=== BÖRVÄRDEN (Holding Registers) ===")
-        print(f"Temperatursetpunkt (Economy) [4x00001]: {hr[0]} °C")
-        print(f"Temperatursetpunkt (Comfort) [4x00002]: {hr[1]} °C")
-        print(f"Tilluftsfläkt hastighet EC [4x00003]: {hr[2]} %")
-        print(f"Frånluftsfläkt hastighet EC [4x00004]: {hr[3]} %")
-    else:
-        print("Kunde inte läsa Holding Registers.")
+        # 2. Läs fläktar och kontrollregister (Holding Registers 0-30)
+        holding_res = client.read_holding_registers(address=0, count=30, device_id=UNIT_ID)
+        if not holding_res.isError():
+            h = holding_res.registers
+            print("\n🌀 FLÄKTAKTIVITET")
+            print(f"  • Tilluftsfläkt:        {h[2]:>5} %")
+            print(f"  • Frånluftsfläkt:       {h[3]:>5} %")
 
-    # 4. Läs Coil Status (Driftlägen: Enhet på, Övertryck, Forcering, Borta)
-    coils = client.read_coils(address=0, count=5, device_id=DEVICE_ID)
-    if not coils.isError():
-        cr = coils.bits
-        print("\n=== DRIFTLÄGEN & FUNKTIONER (Coils) ===")
-        print(f"Unit on [0x00001]: {cr[0]}")
-        print(f"Overpressure mode / Eldning [0x00002]: {cr[1]}")
-        print(f"Boost mode / Forcering [0x00003]: {cr[2]}")
-        print(f"Away mode / Borta [0x00004]: {cr[3]}")
-    else:
-        print("Kunde inte läsa Coils.")
+            print("\n⚙️  DRIFTLÄGEN")
+            boost_status = "PÅ 🚀" if h[REG_BOOST] == 1 else "AV 🛑"
+            print(f"  • Forcering (Reg {REG_BOOST}):     {boost_status}")
+            print(f"  • Övertryck (Reg {REG_OVERPRESSURE}):    Värde: {h[REG_OVERPRESSURE]}")
+            
+            print("\n📊 GRUNDINSTÄLLNINGAR (Reg 20-28)")
+            print(f"  • Reg 20 (Tilluft forcering?): {h[20]} %")
+            print(f"  • Reg 21 (Frånluft forcering?): {h[21]} %")
+            print(f"  • Reg 23-28 (Timers/Param):    {h[23:29]}")
 
+    except Exception as e:
+        print(f"Fel vid avläsning: {e}")
+    finally:
     client.close()
-else:
-    print("Kunde inte ansluta till aggregatet.")
+    print("==================================================")
+
+def set_register(reg, value, mode_name):
+    client = connect_client()
+    try:
+        print(f"Sätter {mode_name} (Register {reg}) till {value}...")
+        client.write_register(address=reg, value=value, device_id=UNIT_ID)
+        
+        # Verifiera skrivningen
+        res = client.read_holding_registers(address=reg, count=1, device_id=UNIT_ID)
+        if not res.isError() and res.registers[0] == value:
+            print(f"✅ Verifiering OK: {mode_name} har värdet {value}")
+        else:
+            actual = res.registers[0] if not res.isError() else "Fel vid läsning"
+            print(f"⚠️  Varning: Skrivning utförd, men verifiering visar värde: {actual}")
+    except Exception as e:
+        print(f"Fel vid skrivning: {e}")
+    finally:
+        client.close()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Heru 160T Styrning")
+    parser.add_argument("--boost", choices=["on", "off"], help="Slå på/av Forcering")
+    parser.add_argument("--reg", type=int, help="Skriv till ett specifikt register")
+    parser.add_argument("--val", type=int, default=1, help="Värde att skriva (standard 1)")
+
+    args = parser.parse_args()
+
+    if args.boost == "on":
+        set_register(REG_BOOST, 1, "Forcering")
+    elif args.boost == "off":
+        set_register(REG_BOOST, 0, "Forcering")
+    elif args.reg is not None:
+        set_register(args.reg, args.val, f"Register {args.reg}")
+    else:
+        read_status()
