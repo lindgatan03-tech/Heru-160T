@@ -14,12 +14,12 @@ HERU_PORT = 502
 UNIT_ID = 1
 
 # Modbus Coils (0-baserade adresser för styrsignaler)
-COIL_OVERPRESSURE = 1  # 0x00002 i mappen (Övertryck / Eldningsläge)[cite: 5]
-COIL_BOOST = 2         # 0x00003 i mappen (Forcering)[cite: 5]
+COIL_OVERPRESSURE = 1   # 0x00002 i mappen (Övertryck / Eldningsläge)
+COIL_BOOST = 2          # 0x00003 i mappen (Forcering)
 
-# Holding Registers för fläktreglering i procent (EC-reglering)[cite: 6]
-REG_SUPPLY_FAN = 2     # 4x00003: Tilluftsfläkt speed (%)[cite: 6]
-REG_EXHAUST_FAN = 3    # 4x00004: Frånluftsfläkt speed (%)[cite: 6]
+# Holding Registers för fläktreglering i procent (EC-reglering)
+REG_SUPPLY_FAN = 2      # 4x00003: Tilluftsfläkt speed (%)
+REG_EXHAUST_FAN = 3     # 4x00004: Frånluftsfläkt speed (%)
 
 def connect_client():
     client = ModbusTcpClient(HERU_IP, port=HERU_PORT)
@@ -32,10 +32,10 @@ def read_status():
     client = connect_client()
     try:
         print("==================================================")
-        print("         HERU 160T - STATUS & TELEMETRI           ")
+        print("         HERU 160T - STATUS & TELEMETRI            ")
         print("==================================================")
 
-        # 1. Läs temperaturer (Input Registers 0-3)
+        # 1. Läs temperaturer (Input Registers 0-6)
         input_res = client.read_input_registers(address=0, count=7, device_id=UNIT_ID)
         if not input_res.isError():
             r = input_res.registers
@@ -45,16 +45,21 @@ def read_status():
             print(f"  • Tilluft:             {parse_temp(r[2]):>6.1f} °C")
             print(f"  • Frånluft (Inne):     {parse_temp(r[3]):>6.1f} °C")
             print(f"  • Avluft:              {parse_temp(r[4]):>6.1f} °C")
+            
+            t_ute, t_fran, t_ater = parse_temp(r[1]), parse_temp(r[3]), parse_temp(r[6])
+            if t_fran - t_ute > 3:
+                eff = (t_ater - t_ute) / (t_fran - t_ute) * 100
+                print(f"  • Verkningsgrad (beräknad):  {eff:>5.1f} %")
 
-        # 2. Läs fläktar (Holding Registers 2 & 3)[cite: 6]
+        # 2. Läs fläktar (Holding Registers 2 & 3)
         holding_res = client.read_holding_registers(address=0, count=4, device_id=UNIT_ID)
         if not holding_res.isError():
             h = holding_res.registers
             print("\n🌀 FLÄKTAKTIVITET")
-            print(f"  • Tilluftsfläkt:        {h[2]:>3} %")
-            print(f"  • Frånluftsfläkt:       {h[3]:>3} %")
-	
-	 # 2b. Verklig fläkteffekt och filterdagar (Input Registers 19-25)
+            print(f"  • Tilluftsfläkt:         {h[2]:>3} %")
+            print(f"  • Frånluftsfläkt:        {h[3]:>3} %")
+    
+        # 2b. Verklig fläkteffekt och filterdagar (Input Registers 19-25)
         act = client.read_input_registers(address=19, count=7, device_id=UNIT_ID)
         if not act.isError():
             a = act.registers
@@ -63,10 +68,7 @@ def read_status():
             print(f"  • Frånluft, verklig effekt:   {a[6]:>3} %")
             print(f"  • Dagar kvar till filterbyte: {a[0]}")
 
-
-
-
-        # 3. Läs av driftlägen via Coils (0 till 4)[cite: 5]
+        # 3. Läs av driftlägen via Coils (0 till 4)
         coils_res = client.read_coils(address=0, count=5, device_id=UNIT_ID)
         if not coils_res.isError():
             c = coils_res.bits
