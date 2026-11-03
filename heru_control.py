@@ -36,15 +36,15 @@ def read_status():
         print("==================================================")
 
         # 1. Läs temperaturer (Input Registers 0-3)
-        input_res = client.read_input_registers(address=0, count=4, device_id=UNIT_ID)
+        input_res = client.read_input_registers(address=0, count=7, device_id=UNIT_ID)
         if not input_res.isError():
             r = input_res.registers
             parse_temp = lambda v: (v - 65536 if v > 32767 else v) / 10.0
             print("🌡️  TEMPERATURER")
             print(f"  • Utomhusluft:         {parse_temp(r[1]):>6.1f} °C")
-            # print(f"  • Tilluft:             {parse_temp(r[0]):>6.1f} °C")
-            print(f"  • Frånluft (Inne):     {parse_temp(r[2]):>6.1f} °C")
-            print(f"  • Avluft:              {parse_temp(r[3]):>6.1f} °C")
+            print(f"  • Tilluft:             {parse_temp(r[2]):>6.1f} °C")
+            print(f"  • Frånluft (Inne):     {parse_temp(r[3]):>6.1f} °C")
+            print(f"  • Avluft:              {parse_temp(r[4]):>6.1f} °C")
 
         # 2. Läs fläktar (Holding Registers 2 & 3)[cite: 6]
         holding_res = client.read_holding_registers(address=0, count=4, device_id=UNIT_ID)
@@ -53,6 +53,18 @@ def read_status():
             print("\n🌀 FLÄKTAKTIVITET")
             print(f"  • Tilluftsfläkt:        {h[2]:>3} %")
             print(f"  • Frånluftsfläkt:       {h[3]:>3} %")
+	
+	 # 2b. Verklig fläkteffekt och filterdagar (Input Registers 19-25)
+        act = client.read_input_registers(address=19, count=7, device_id=UNIT_ID)
+        if not act.isError():
+            a = act.registers
+            print("\n📊 VERKLIGT LÄGE")
+            print(f"  • Tilluft, verklig effekt:    {a[5]:>3} %")
+            print(f"  • Frånluft, verklig effekt:   {a[6]:>3} %")
+            print(f"  • Dagar kvar till filterbyte: {a[0]}")
+
+
+
 
         # 3. Läs av driftlägen via Coils (0 till 4)[cite: 5]
         coils_res = client.read_coils(address=0, count=5, device_id=UNIT_ID)
